@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jogo da Cobrinha Multiplayer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            touch-action: none;
+        }
+        .touch-controls button:active {
+            transform: scale(0.95);
+            background-color: #3b82f6;
+        }
+        #game-id-display {
+            cursor: pointer;
+        }
+        .copied-feedback {
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #22c55e;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 flex flex-col items-center justify-center min-h-screen text-gray-800 p-4">
+
+    <div class="w-full max-w-lg mx-auto text-center">
+        <h1 class="text-4xl font-bold text-blue-600 mb-2">Cobrinha Multiplayer</h1>
+        
+        <!-- Placar -->
+        <div id="score-container" class="hidden justify-around items-center bg-gray-100 p-3 rounded-lg shadow-md mb-4">
+            <div>
+                <p class="text-lg font-semibold text-blue-600">JOGADOR 1</p>
+                <p id="score1" class="text-2xl font-bold">0</p>
+            </div>
+             <div>
+                <p class="text-lg font-semibold text-red-600">JOGADOR 2</p>
+                <p id="score2" class="text-2xl font-bold">0</p>
+            </div>
+        </div>
+
+        <!-- Área do Jogo -->
+        <div id="game-container" class="relative bg-gray-200 rounded-lg overflow-hidden shadow-xl" style="width: 100%; padding-bottom: 100%;">
+            <canvas id="gameCanvas" class="absolute top-0 left-0 w-full h-full"></canvas>
+            
+            <!-- Overlay de Lobby/Fim de Jogo -->
+            <div id="game-overlay" class="absolute inset-0 bg-black bg-opacity-70 flex flex-col items-center justify-center text-white p-4">
+                <div id="lobby-view">
+                    <h2 class="text-3xl font-bold mb-6">Entre em uma Sala</h2>
+                    <div class="space-y-4">
+                        <button id="create-game-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full text-xl shadow-lg transition-transform transform hover:scale-105">
+                            Criar Nova Sala
+                        </button>
+                        <div class="flex items-center text-gray-300">
+                            <hr class="flex-grow border-t border-gray-500"/><span class="mx-4">OU</span><hr class="flex-grow border-t border-gray-500"/>
+                        </div>
+                        <div class="flex flex-col sm:flex-row gap-2">
+                             <input type="text" id="join-game-input" placeholder="Cole o ID da sala" class="flex-grow bg-gray-700 text-white placeholder-gray-400 p-3 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 text-center">
+                             <button id="join-game-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-full text-xl shadow-lg transition-transform transform hover:scale-105">
+                                 Entrar
+                             </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="waiting-view" class="hidden text-center">
+                    <h2 class="text-3xl font-bold mb-4">Aguardando Oponente...</h2>
+                    <p class="mb-4">Compartilhe o ID da sala:</p>
+                    <div id="game-id-display" class="relative bg-gray-800 text-yellow-400 font-mono text-2xl p-3 rounded-lg inline-block cursor-pointer" title="Clique para copiar">
+                        <span id="game-id-text"></span>
+                    </div>
+                </div>
+
+                <div id="game-over-view" class="hidden text-center">
+                     <h2 id="game-status" class="text-4xl font-bold mb-4">Fim de Jogo!</h2>
+                     <p id="game-message" class="text-xl mb-6"></p>
+                     <button id="play-again-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full text-xl shadow-lg transition-transform transform hover:scale-105">
+                         Jogar Novamente
+                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controles de Toque para Celular -->
+        <div id="touch-controls" class="grid grid-cols-3 gap-2 mt-4 md:hidden">
+            <div></div>
+            <button data-direction="up" class="control-btn bg-blue-500 text-white p-4 rounded-lg shadow-md col-start-2">↑</button>
+            <div></div>
+            <button data-direction="left" class="control-btn bg-blue-500 text-white p-4 rounded-lg shadow-md">←</button>
+            <button data-direction="down" class="control-btn bg-blue-500 text-white p-4 rounded-lg shadow-md">↓</button>
+            <button data-direction="right" class="control-btn bg-blue-500 text-white p-4 rounded-lg shadow-md">→</button>
+        </div>
+    </div>
+
+    <script type="module">
+        // Importações do Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, updateDoc, collection, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Configuração do Firebase
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Elementos da UI
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameContainer = document.getElementById('game-container');
+        const scoreContainer = document.getElementById('score-container');
+        const score1Elem = document.getElementById('score1');
+        const score2Elem = document.getElementById('score2');
+        const gameOverlay = document.getElementById('game-overlay');
+        const lobbyView = document.getElementById('lobby-view');
+        const waitingView = document.getElementById('waiting-view');
+        const gameOverView = document.getElementById('game-over-view');
+        const gameIdText = document.getElementById('game-id-text');
+        const gameIdDisplay = document.getElementById('game-id-display');
+        const gameStatus = document.getElementById('game-status');
+        const gameMessage = document.getElementById('game-message');
+        const createGameBtn = document.getElementById('create-game-btn');
+        const joinGameInput = document.getElementById('join-game-input');
+        const joinGameBtn = document.getElementById('join-game-btn');
+        const playAgainBtn = document.getElementById('play-again-btn');
+        const touchControls = document.getElementById('touch-controls');
+        
+        // Estado do Jogo
+        let gridSize = 20;
+        let canvasSize = 400;
+        let gameId = null;
+        let playerId = null;
+        let playerNumber = null;
+        let gameInterval = null;
+        let gameState = null;
+        let unsubscribe = null;
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const gamesCollectionRef = collection(db, `artifacts/${appId}/public/data/snake-games`);
+
+        // --- AUTENTICAÇÃO E INICIALIZAÇÃO ---
+        onAuthStateChanged(auth, user => {
+            if (user) {
+                playerId = user.uid;
+                console.log("Autenticado anonimamente:", playerId);
+            } else {
+                signInAnonymously(auth).catch(error => {
+                    console.error("Erro na autenticação anônima:", error);
+                });
+            }
+        });
+
+        // --- FUNÇÕES PRINCIPAIS DO JOGO ---
+
+        async function createGame() {
+            if (!playerId) { alert("Aguarde a autenticação..."); return; }
+            
+            playerNumber = 1;
+            const newGameRef = doc(collection(db, `artifacts/${appId}/public/data/snake-games`));
+            gameId = newGameRef.id;
+
+            gameState = {
+                players: {
+                    [playerId]: {
+                        number: 1,
+                        snake: [{ x: 5, y: 10 }],
+                        direction: 'right',
+                        score: 0,
+                        color: '#2563eb' // Blue
+                    }
+                },
+                food: { x: 15, y: 10 },
+                status: 'waiting', // waiting, playing, gameover
+                winner: null
+            };
+
+            await setDoc(newGameRef, gameState);
+            listenToGameUpdates(gameId);
+            showWaitingScreen();
+        }
+
+        async function joinGame() {
+            if (!playerId) { alert("Aguarde a autenticação..."); return; }
+            
+            const joinId = joinGameInput.value.trim();
+            if (!joinId) { alert("Por favor, insira um ID de sala."); return; }
+            
+            const gameRef = doc(db, `artifacts/${appId}/public/data/snake-games`, joinId);
+            const gameSnap = await getDoc(gameRef);
+
+            if (gameSnap.exists()) {
+                const gameData = gameSnap.data();
+                if (Object.keys(gameData.players).length < 2) {
+                    playerNumber = 2;
+                    gameId = joinId;
+
+                    const newPlayerUpdate = {
+                        [`players.${playerId}`]: {
+                            number: 2,
+                            snake: [{ x: 15, y: 10 }],
+                            direction: 'left',
+                            score: 0,
+                            color: '#dc2626' // Red
+                        },
+                        status: 'playing'
+                    };
+                    
+                    await updateDoc(gameRef, newPlayerUpdate);
+                    listenToGameUpdates(gameId);
+                } else {
+                    alert("A sala está cheia!");
+                }
+            } else {
+                alert("Sala não encontrada!");
+            }
+        }
+
+        function listenToGameUpdates(id) {
+            const gameRef = doc(db, `artifacts/${appId}/public/data/snake-games`, id);
+            unsubscribe = onSnapshot(gameRef, (doc) => {
+                if (!doc.exists()) {
+                    handleGameEnd("O outro jogador saiu.");
+                    return;
+                }
+                gameState = doc.data();
+                handleGameStateUpdate();
+            });
+        }
+        
+        function handleGameStateUpdate() {
+            if (!gameState) return;
+
+            if (gameState.status === 'playing') {
+                showGameScreen();
+                if (playerNumber === 1 && !gameInterval) {
+                     // O jogador 1 controla o loop do jogo
+                    gameInterval = setInterval(gameLoop, 150);
+                }
+            } else if (gameState.status === 'waiting') {
+                showWaitingScreen();
+            } else if (gameState.status === 'gameover') {
+                 handleGameEnd(gameState.winner);
+            }
+            
+            draw();
+            updateScores();
+        }
+
+        function gameLoop() {
+            // Apenas o Jogador 1 executa a lógica e atualiza o estado
+            if (playerNumber !== 1 || !gameState || gameState.status !== 'playing') {
+                return;
+            }
+
+            let newGameState = JSON.parse(JSON.stringify(gameState)); // Cópia profunda
+            let players = Object.values(newGameState.players);
+            let playerIds = Object.keys(newGameState.players);
+
+            // 1. Mover cobras
+            for (const p of players) {
+                const head = { ...p.snake[0] };
+                switch (p.direction) {
+                    case 'up': head.y--; break;
+                    case 'down': head.y++; break;
+                    case 'left': head.x--; break;
+                    case 'right': head.x++; break;
+                }
+                p.snake.unshift(head);
+            }
+            
+            // 2. Verificar colisões e comida
+            let gameOver = false;
+            const allSnakes = players.flatMap(p => p.snake);
+
+            for (let i = 0; i < players.length; i++) {
+                let p = players[i];
+                let head = p.snake[0];
+                
+                // Colisão com parede
+                if (head.x < 0 || head.x >= 20 || head.y < 0 || head.y >= 20) {
+                    newGameState.winner = players[1-i].number;
+                    gameOver = true;
+                }
+
+                // Colisão com si mesmo
+                for(let j = 1; j < p.snake.length; j++){
+                    if(head.x === p.snake[j].x && head.y === p.snake[j].y){
+                       newGameState.winner = players[1-i].number;
+                       gameOver = true;
+                    }
+                }
+                
+                // Colisão com oponente
+                 let otherPlayer = players[1-i];
+                 if(otherPlayer) {
+                     for(let segment of otherPlayer.snake){
+                         if(head.x === segment.x && head.y === segment.y){
+                            newGameState.winner = otherPlayer.number;
+                            gameOver = true;
+                         }
+                     }
+                 }
+
+
+                // Comeu comida?
+                if (head.x === newGameState.food.x && head.y === newGameState.food.y) {
+                    p.score++;
+                    newGameState.food = getRandomFoodPosition(allSnakes);
+                } else {
+                    p.snake.pop();
+                }
+            }
+            
+            if (gameOver) {
+                newGameState.status = 'gameover';
+            }
+
+            // Atualizar o estado no Firestore
+            const gameRef = doc(db, `artifacts/${appId}/public/data/snake-games`, gameId);
+            setDoc(gameRef, newGameState);
+        }
+
+        function draw() {
+            resizeCanvas();
+            ctx.fillStyle = '#f3f4f6'; // bg-gray-100
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (!gameState) return;
+
+            // Desenhar comida
+            ctx.fillStyle = '#16a34a'; // green-600
+            ctx.beginPath();
+            ctx.arc(gameState.food.x * gridSize + gridSize / 2, gameState.food.y * gridSize + gridSize / 2, gridSize / 2.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Desenhar cobras
+            for (const p of Object.values(gameState.players)) {
+                p.snake.forEach((segment, index) => {
+                    ctx.fillStyle = index === 0 ? darkenColor(p.color) : p.color;
+                    drawRoundedRect(ctx, segment.x * gridSize, segment.y * gridSize, gridSize, gridSize, 4);
+                });
+            }
+        }
+        
+        function handleGameEnd(winnerInfo) {
+            clearInterval(gameInterval);
+            gameInterval = null;
+            
+            if (typeof winnerInfo === 'number') {
+                gameMessage.textContent = `Jogador ${winnerInfo} venceu!`;
+            } else {
+                gameMessage.textContent = winnerInfo; // Exibe mensagem customizada
+            }
+            
+            showGameOverScreen();
+        }
+        
+        function playAgain() {
+            if(playerNumber === 1){
+                 // Jogador 1 reinicia o jogo para todos
+                createGame();
+            } else {
+                // Jogador 2 volta ao lobby
+                resetLocalState();
+                showLobbyScreen();
+            }
+        }
+
+        // --- FUNÇÕES DE CONTROLE E UI ---
+        
+        function changeDirection(newDirection) {
+            if (!gameId || !playerId || !gameState) return;
+            const myPlayer = Object.values(gameState.players).find(p => p.number === playerNumber);
+            if(!myPlayer) return;
+
+            const goingUp = myPlayer.direction === 'up';
+            const goingDown = myPlayer.direction === 'down';
+            const goingLeft = myPlayer.direction === 'left';
+            const goingRight = myPlayer.direction === 'right';
+
+            let allowed = true;
+            if ((newDirection === 'up' && goingDown) || (newDirection === 'down' && goingUp) ||
+                (newDirection === 'left' && goingRight) || (newDirection === 'right' && goingLeft)) {
+                allowed = false;
+            }
+
+            if (allowed) {
+                const gameRef = doc(db, `artifacts/${appId}/public/data/snake-games`, gameId);
+                updateDoc(gameRef, {
+                    [`players.${playerId}.direction`]: newDirection
+                });
+            }
+        }
+
+        function showLobbyScreen() {
+            lobbyView.style.display = 'block';
+            waitingView.style.display = 'none';
+            gameOverView.style.display = 'none';
+            scoreContainer.style.display = 'none';
+            gameOverlay.style.display = 'flex';
+        }
+        function showWaitingScreen() {
+            lobbyView.style.display = 'none';
+            waitingView.style.display = 'block';
+            gameOverView.style.display = 'none';
+            scoreContainer.style.display = 'none';
+            gameOverlay.style.display = 'flex';
+            gameIdText.textContent = gameId;
+        }
+        function showGameScreen() {
+            gameOverlay.style.display = 'none';
+            scoreContainer.style.display = 'flex';
+        }
+        function showGameOverScreen() {
+             gameOverView.style.display = 'block';
+             lobbyView.style.display = 'none';
+             waitingView.style.display = 'none';
+             gameOverlay.style.display = 'flex';
+        }
+        
+        function resetLocalState() {
+             if (unsubscribe) unsubscribe();
+             clearInterval(gameInterval);
+             gameId = null;
+             playerNumber = null;
+             gameInterval = null;
+             gameState = null;
+             unsubscribe = null;
+             joinGameInput.value = '';
+        }
+
+        // --- FUNÇÕES UTILITÁRIAS ---
+        function updateScores() {
+             const player1 = Object.values(gameState.players).find(p => p.number === 1);
+             const player2 = Object.values(gameState.players).find(p => p.number === 2);
+             score1Elem.textContent = player1 ? player1.score : 0;
+             score2Elem.textContent = player2 ? player2.score : 0;
+        }
+
+        function getRandomFoodPosition(allSnakes = []) {
+            let position;
+            while (true) {
+                position = { x: Math.floor(Math.random() * 20), y: Math.floor(Math.random() * 20) };
+                if (!allSnakes.some(seg => seg.x === position.x && seg.y === position.y)) {
+                    return position;
+                }
+            }
+        }
+        function drawRoundedRect(ctx, x, y, width, height, radius) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+            ctx.fill();
+        }
+        function darkenColor(hex) {
+            let color = hex.substring(1); // remove #
+            let rgb = parseInt(color, 16);
+            let r = (rgb >> 16) & 0xff;
+            let g = (rgb >>  8) & 0xff;
+            let b = (rgb >>  0) & 0xff;
+            r = Math.max(0, r - 40);
+            g = Math.max(0, g - 40);
+            b = Math.max(0, b - 40);
+            return "#" + (0x1000000 + r * 0x10000 + g * 0x100 + b).toString(16).slice(1);
+        }
+
+        function copyGameId() {
+            navigator.clipboard.writeText(gameId).then(() => {
+                const feedback = document.createElement('div');
+                feedback.textContent = 'Copiado!';
+                feedback.className = 'copied-feedback';
+                gameIdDisplay.appendChild(feedback);
+                setTimeout(() => feedback.remove(), 2000);
+            }).catch(err => {
+                console.error('Falha ao copiar:', err);
+            });
+        }
+        
+        function resizeCanvas() {
+            const containerWidth = gameContainer.clientWidth;
+            if (canvas.width !== containerWidth) {
+                canvas.width = containerWidth;
+                canvas.height = containerWidth;
+                canvasSize = containerWidth;
+                gridSize = canvasSize / 20;
+                draw();
+            }
+        }
+
+        // --- EVENT LISTENERS ---
+        createGameBtn.addEventListener('click', createGame);
+        joinGameBtn.addEventListener('click', joinGame);
+        playAgainBtn.addEventListener('click', playAgain);
+        gameIdDisplay.addEventListener('click', copyGameId);
+        
+        document.addEventListener('keydown', (e) => {
+            const keyMap = { 'ArrowUp': 'up', 'w': 'up', 'ArrowDown': 'down', 's': 'down', 'ArrowLeft': 'left', 'a': 'left', 'ArrowRight': 'right', 'd': 'right' };
+            if (keyMap[e.key]) {
+                e.preventDefault();
+                changeDirection(keyMap[e.key]);
+            }
+        });
+        
+        touchControls.addEventListener('click', (e) => {
+            const button = e.target.closest('.control-btn');
+            if (button && button.dataset.direction) {
+                changeDirection(button.dataset.direction);
+            }
+        });
+
+        window.addEventListener('resize', resizeCanvas);
+        
+        // --- INÍCIO ---
+        resizeCanvas();
+        showLobbyScreen();
+    </script>
+</body>
+</html>
